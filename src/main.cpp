@@ -1,5 +1,9 @@
 #include "main.hpp"
 
+caf_context::caf_context() : sys(cfg) {
+  // nop
+}
+
 int main(int argc, char** argv) {
 #if CAF_VERSION >= 1800
   caf::init_global_meta_objects<caf::id_block::microbench>();

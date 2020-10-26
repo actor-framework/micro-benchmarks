@@ -29,6 +29,8 @@ using namespace caf;
 
 class serialization : public base_fixture {
 public:
+  caf_context_ptr context;
+
   foo foo_val = foo{10, 20};
 
   container_type foo_val_binary;
@@ -42,6 +44,7 @@ public:
   container_type msg_2int_binary;
 
   void SetUp(const benchmark::State&) override {
+    context = make_caf_context();
     store(foo_val, foo_val_binary);
     store(bar_val, bar_val_binary);
     store(msg_2int, msg_2int_binary);
@@ -51,12 +54,13 @@ public:
     foo_val_binary.clear();
     bar_val_binary.clear();
     msg_2int_binary.clear();
+    context.reset();
   }
 
 private:
   template <class T>
-  static void store(T x, container_type& storage) {
-    binary_serializer sink{nullptr, storage};
+  void store(T x, container_type& storage) {
+    binary_serializer sink{context->sys, storage};
     apply(sink, x);
   }
 };
@@ -65,7 +69,7 @@ BENCHMARK_F(serialization, save_foo_binary)(benchmark::State& state) {
   for (auto _ : state) {
     container_type buf;
     buf.reserve(512);
-    binary_serializer sink{nullptr, buf};
+    binary_serializer sink{context->sys, buf};
     apply(sink, foo_val);
     benchmark::DoNotOptimize(buf);
   }
@@ -75,7 +79,7 @@ BENCHMARK_F(serialization, save_bar_binary)(benchmark::State& state) {
   for (auto _ : state) {
     container_type buf;
     buf.reserve(512);
-    binary_serializer sink{nullptr, buf};
+    binary_serializer sink{context->sys, buf};
     apply(sink, bar_val);
     benchmark::DoNotOptimize(buf);
   }
@@ -85,7 +89,7 @@ BENCHMARK_F(serialization, save_msg_2int_binary)(benchmark::State& state) {
   for (auto _ : state) {
     container_type buf;
     buf.reserve(512);
-    binary_serializer sink{nullptr, buf};
+    binary_serializer sink{context->sys, buf};
     apply(sink, msg_2int);
     benchmark::DoNotOptimize(buf);
   }
@@ -94,7 +98,7 @@ BENCHMARK_F(serialization, save_msg_2int_binary)(benchmark::State& state) {
 BENCHMARK_F(serialization, load_foo_binary)(benchmark::State& state) {
   for (auto _ : state) {
     foo result;
-    binary_deserializer source{nullptr, foo_val_binary};
+    binary_deserializer source{context->sys, foo_val_binary};
     apply(source, result);
     benchmark::DoNotOptimize(result);
   }
@@ -103,7 +107,7 @@ BENCHMARK_F(serialization, load_foo_binary)(benchmark::State& state) {
 BENCHMARK_F(serialization, load_bar_binary)(benchmark::State& state) {
   for (auto _ : state) {
     bar result;
-    binary_deserializer source{nullptr, bar_val_binary};
+    binary_deserializer source{context->sys, bar_val_binary};
     apply(source, result);
     benchmark::DoNotOptimize(result);
   }
@@ -112,7 +116,7 @@ BENCHMARK_F(serialization, load_bar_binary)(benchmark::State& state) {
 BENCHMARK_F(serialization, load_msg_2int_binary)(benchmark::State& state) {
   for (auto _ : state) {
     message result;
-    binary_deserializer source{nullptr, msg_2int_binary};
+    binary_deserializer source{context->sys, msg_2int_binary};
     apply(source, result);
     benchmark::DoNotOptimize(result);
   }

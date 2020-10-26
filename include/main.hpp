@@ -1,6 +1,10 @@
+#include "caf/actor_system.hpp"
+#include "caf/actor_system_config.hpp"
 #include "caf/config.hpp"
 
 #include <benchmark/benchmark.h>
+
+#include <memory>
 
 // -- custom message types -----------------------------------------------------
 
@@ -58,6 +62,18 @@ typename Inspector::result_type inspect(Inspector& f, bar& x) {
 
 #endif // CAF_VERSION >= 1800
 
-// -- fixture base for initializing global meta objects -
+// -- fixture base for initializing global meta objects ------------------------
+
+struct caf_context {
+  caf::actor_system_config cfg;
+  caf::actor_system sys;
+  caf_context();
+};
+
+using caf_context_ptr = std::unique_ptr<caf_context>;
+
+inline auto make_caf_context() {
+  return std::make_unique<caf_context>();
+}
 
 using base_fixture = benchmark::Fixture;
