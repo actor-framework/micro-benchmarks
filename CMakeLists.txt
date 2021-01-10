@@ -88,6 +88,21 @@ else()
   endif()
 endif()
 
+if(CAF_NET_TAG)
+  message(STATUS "Fetch CAF_NET ${CAF_NET_TAG}")
+  set(CAF_ROOT ${actor_framework_BINARY_DIR} CACHE INTERNAL "")
+  FetchContent_Declare(
+    incubator
+    GIT_REPOSITORY https://github.com/actor-framework/incubator.git
+    GIT_TAG        ${CAF_NET_TAG}
+  )
+  FetchContent_Populate(incubator)
+  set(CAF_INC_SANITIZERS "${CAF_SANITIZERS}" CACHE INTERNAL "")
+  add_subdirectory(${incubator_SOURCE_DIR} ${incubator_BINARY_DIR})
+  set(INCUBATOR_SRC "src/dummy.cpp")
+  set(INCUBATOR_LIB CAF::net)
+endif()
+
 # -- add executables -----------------------------------------------------------
 
 add_executable(micro-benchmark
@@ -96,8 +111,9 @@ add_executable(micro-benchmark
   "src/message-creation.cpp"
   "src/pattern-matching.cpp"
   "src/serialization.cpp"
+  ${INCUBATOR_SRC}
 )
 
 target_include_directories(micro-benchmark PRIVATE "include")
 
-target_link_libraries(micro-benchmark PRIVATE benchmark::benchmark_main CAF::core)
+target_link_libraries(micro-benchmark PRIVATE benchmark::benchmark_main CAF::core ${INCUBATOR_LIB})
