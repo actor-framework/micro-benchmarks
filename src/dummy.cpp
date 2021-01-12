@@ -4,6 +4,7 @@
 #include "caf/byte_buffer.hpp"
 #include "caf/event_based_actor.hpp"
 #include "caf/message.hpp"
+#include "caf/net/length_prefix_framing.hpp"
 #include "caf/net/socket_manager.hpp"
 #include "caf/net/stream_socket.hpp"
 #include "caf/net/stream_transport.hpp"
@@ -22,7 +23,8 @@ public:
     : send_buf{std::make_shared<byte_buffer>()},
       recv_buf{std::make_shared<byte_buffer>()},
       err{none},
-      transport{send_buf} {
+      raw_transport{send_buf},
+      lp_transport{send_buf} {
     // nop
   }
 
@@ -94,7 +96,9 @@ public:
   std::shared_ptr<byte_buffer> recv_buf;
   caf::error err;
 
-  net::stream_transport<dummy_application> transport;
+  net::stream_transport<stream_application> raw_transport;
+  net::stream_transport<net::length_prefix_framing<message_application>>
+    lp_transport;
 };
 
 BENCHMARK_F(net_communication, raw_sockets)(benchmark::State& state) {
@@ -106,7 +110,15 @@ BENCHMARK_F(net_communication, raw_sockets)(benchmark::State& state) {
 
 BENCHMARK_F(net_communication, stream_transport)(benchmark::State& state) {
   for (auto _ : state) {
-    transport.handle_write_event(this);
+    raw_transport.handle_write_event(this);
+    recv(recv_socket, *recv_buf);
+  }
+}
+
+BENCHMARK_F(net_communication, length_prefix_framing)
+(benchmark::State& state) {
+  for (auto _ : state) {
+    lp_transport.handle_write_event(this);
     recv(recv_socket, *recv_buf);
   }
 }
