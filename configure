@@ -15,6 +15,11 @@ General CMake options:
   --build-type=STRING       set build type of single-configuration generators
   --generator=STRING        set CMake generator (see cmake --help)
   --cxx-flags=STRING        set CMAKE_CXX_FLAGS when running CMake
+  --prefix=PATH             set installation directory
+
+Locating packages in non-standard locations:
+
+  --with-caf=PATH           use a local CAF version instead of fetching a tag
 
 Debugging options:
   --log-level=STRING      build with debugging output, possible values:
@@ -107,11 +112,18 @@ while [ $# -ne 0 ]; do
       tag="$optarg"
       append_cache_entry CAF_TAG STRING "$tag"
       ;;
+    --with-caf=*)
+      tag="local"
+      append_cache_entry CAF_ROOT PATH "$optarg"
+      ;;
     --build-type=*)
       append_cache_entry CMAKE_BUILD_TYPE STRING "$optarg"
       ;;
     --cxx-flags=*)
       append_cache_entry CMAKE_CXX_FLAGS STRING "$optarg"
+      ;;
+    --prefix=*)
+      append_cache_entry CMAKE_INSTALL_PREFIX PATH "$optarg"
       ;;
     --log-level=*)
       append_cache_entry CAF_LOG_LEVEL STRING "$optarg"
