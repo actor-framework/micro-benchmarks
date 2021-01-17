@@ -16,7 +16,7 @@ using container_type = caf::binary_serializer::container_type;
 #if CAF_VERSION >= 1800
 template <class Inspector, class T>
 void apply(Inspector& inspector, T& x) {
-  std::ignore = inspector.apply_object(x);
+  std::ignore = inspector.apply(x);
 }
 #else
 template <class Inspector, class T>
