@@ -13,6 +13,12 @@
 using namespace caf;
 
 template <class... Ts>
+message make_dynamic_message(Ts&&... xs) {
+  message_builder mb;
+  return mb.append_all(std::forward<Ts>(xs)...).to_message();
+}
+
+template <class... Ts>
 void reset(Ts&... xs) {
   ((xs = Ts{}), ...);
 }
@@ -26,6 +32,12 @@ public:
   message native_two_strings;
   message native_one_foo;
   message native_one_bar;
+
+  message dynamic_two_ints;
+  message dynamic_two_doubles;
+  message dynamic_two_strings;
+  message dynamic_one_foo;
+  message dynamic_one_bar;
 
   // -- our behavior and index for the last invoked handler --------------------
 
@@ -42,6 +54,11 @@ public:
     native_two_strings = make_message("hi", "there");
     native_one_foo = make_message(foo{1, 2});
     native_one_bar = make_message(bar{foo{1, 2}});
+    dynamic_two_ints = make_dynamic_message(1, 2);
+    dynamic_two_doubles = make_dynamic_message(1.0, 2.0);
+    dynamic_two_strings = make_dynamic_message("hi", "there");
+    dynamic_one_foo = make_dynamic_message(foo{1, 2});
+    dynamic_one_bar = make_dynamic_message(bar{foo{1, 2}});
     bhvr = message_handler{[this](int) { invoked = 1; }}
              .or_else([this](int, int) { invoked = 2; })
              .or_else([this](double) { invoked = 3; })
@@ -72,6 +89,16 @@ public:
 };
 
 BENCHMARK_F(or_else, make_message)(benchmark::State& state) {
+  for (auto _ : state) {
+    if (!match(state, native_two_ints, 2)
+        || !match(state, native_two_doubles, 4)
+        || !match(state, native_two_strings, 6)
+        || !match(state, native_one_foo, 7) || !match(state, native_one_bar, 8))
+      break;
+  }
+}
+
+BENCHMARK_F(or_else, message_builder)(benchmark::State& state) {
   for (auto _ : state) {
     if (!match(state, native_two_ints, 2)
         || !match(state, native_two_doubles, 4)
