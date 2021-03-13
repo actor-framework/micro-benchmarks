@@ -11,7 +11,7 @@ Usage:
 
 Build options:
   --tag=TAG                 set the CAF tag
-  --net-tag=TAG             set the CAF net tag
+  --inc-tag=TAG             set the CAF incubator tag
 
 General CMake options:
   --cmake=PATH              set a custom path to the CMake binary
@@ -111,9 +111,9 @@ while [ $# -ne 0 ]; do
       tag="$optarg"
       append_cache_entry CAF_TAG STRING "$tag"
       ;;
-    --net-tag=*)
+    --inc-tag=*)
       net_tag="$optarg"
-      append_cache_entry CAF_NET_TAG STRING "$net_tag"
+      append_cache_entry CAF_INC_TAG STRING "$net_tag"
       ;;
     --build-type=*)
       append_cache_entry CMAKE_BUILD_TYPE STRING "$optarg"
