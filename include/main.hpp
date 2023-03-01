@@ -6,6 +6,13 @@
 
 #include <memory>
 
+// -- utility functions --------------------------------------------------------
+
+template <class Container>
+ptrdiff_t ssize(const Container& container) {
+  return static_cast<ptrdiff_t>(container.size());
+}
+
 // -- custom message types -----------------------------------------------------
 
 struct foo {
@@ -34,7 +41,11 @@ inline bool operator==(const bar& lhs, const bar& rhs) {
 CAF_BEGIN_TYPE_ID_BLOCK(microbench, caf::first_custom_type_id)
 
   CAF_ADD_TYPE_ID(microbench, (bar));
+#  if CAF_VERSION < 1900
+  CAF_ADD_TYPE_ID(microbench, (caf::stream<int>) );
+#  endif
   CAF_ADD_TYPE_ID(microbench, (foo));
+  CAF_ADD_TYPE_ID(microbench, (std::vector<int>));
 
 CAF_END_TYPE_ID_BLOCK(microbench)
 
@@ -48,6 +59,10 @@ bool inspect(Inspector& f, bar& x) {
   return f.object(x).fields(f.field("a", x.a), f.field("b", x.b));
 }
 
+#  define APPLY_OR_DIE(inspector, what)                                        \
+    if (!inspector.apply(what))                                                \
+      CAF_CRITICAL("failed to apply data to the inspector!");
+
 #else // CAF_VERSION >= 1800
 
 template <typename Inspector>
@@ -59,6 +74,10 @@ template <typename Inspector>
 typename Inspector::result_type inspect(Inspector& f, bar& x) {
   return f(x.a, x.b);
 }
+
+#  define APPLY_OR_DIE(inspector, what)                                        \
+    if (auto err = inspector(what))                                            \
+      CAF_CRITICAL("failed to apply data to the inspector!");
 
 #endif // CAF_VERSION >= 1800
 

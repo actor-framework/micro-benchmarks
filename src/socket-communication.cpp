@@ -5,9 +5,13 @@
 #include "caf/byte_buffer.hpp"
 #include "caf/event_based_actor.hpp"
 #include "caf/message.hpp"
+#include "caf/net/binary/lower_layer.hpp"
+#include "caf/net/binary/upper_layer.hpp"
 #include "caf/net/length_prefix_framing.hpp"
 #include "caf/net/multiplexer.hpp"
+#include "caf/net/receive_policy.hpp"
 #include "caf/net/socket_manager.hpp"
+#include "caf/net/stream_oriented.hpp"
 #include "caf/net/stream_socket.hpp"
 #include "caf/net/stream_transport.hpp"
 
@@ -20,22 +24,21 @@
 #  include <sys/types.h>
 #endif
 
-#define APPLY_OR_DIE(what)                                                     \
-  if (!sink.apply(what))                                                       \
-    CAF_CRITICAL("failed to apply data to the sink!");
+#if CAF_VERSION < 1900
+using sv_t = caf::string_view;
+#else
+using sv_t = std::string_view;
+#endif
 
 using namespace caf;
 using namespace std::literals;
 
-template <class Container>
-ptrdiff_t ssize(const Container& container) {
-  return static_cast<ptrdiff_t>(container.size());
-}
+namespace {
 
-constexpr string_view ping_text
+constexpr sv_t ping_text
   = "Lorem ipsum dolor sit amet, consectetur adipiscing elit.";
 
-constexpr string_view pong_text
+constexpr sv_t pong_text
   = "In sapien diam, porttitor sed pretium quis, varius at orci.";
 
 class socket_fixture : public base_fixture {
@@ -51,17 +54,19 @@ public:
     {
       binary_serializer sink{nullptr, ping_out};
       sink.skip(sizeof(uint32_t));
-      APPLY_OR_DIE(ping_text);
+      APPLY_OR_DIE(sink, ping_text);
       sink.seek(0);
-      APPLY_OR_DIE(static_cast<uint32_t>(ping_out.size() - sizeof(uint32_t)));
+      APPLY_OR_DIE(sink,
+                   static_cast<uint32_t>(ping_out.size() - sizeof(uint32_t)));
       pong_in.resize(ping_out.size());
     }
     {
       binary_serializer sink{nullptr, pong_out};
       sink.skip(sizeof(uint32_t));
-      APPLY_OR_DIE(pong_text);
+      APPLY_OR_DIE(sink, pong_text);
       sink.seek(0);
-      APPLY_OR_DIE(static_cast<uint32_t>(pong_out.size() - sizeof(uint32_t)));
+      APPLY_OR_DIE(sink,
+                   static_cast<uint32_t>(pong_out.size() - sizeof(uint32_t)));
       ping_in.resize(pong_out.size());
     }
   }
@@ -73,10 +78,6 @@ public:
     receiver.join();
     close(ping_sock);
     close(pong_sock);
-  }
-
-  net::stream_socket handle() const noexcept {
-    return ping_sock;
   }
 
   template <class F>
@@ -106,7 +107,14 @@ public:
   std::thread receiver;
 };
 
+} // namespace
+
+// -- baseline: direct access to the POSIX socket API --------------------------
+
 #ifdef CAF_POSIX
+
+namespace {
+
 auto posix_write(net::stream_socket fd, const byte_buffer& buf) {
   return ::send(fd.id, buf.data(), buf.size(), 0);
 }
@@ -115,7 +123,7 @@ auto posix_read(net::stream_socket fd, byte_buffer& buf) {
   return ::recv(fd.id, buf.data(), buf.size(), 0);
 }
 
-class posix_communication : public socket_fixture {
+class socket_communication_posix : public socket_fixture {
 public:
   void SetUp(const benchmark::State& state) override {
     socket_fixture::SetUp(state);
@@ -134,15 +142,22 @@ public:
   }
 };
 
-BENCHMARK_F(posix_communication, ping_pong)(benchmark::State& state) {
+} // namespace
+
+BENCHMARK_F(socket_communication_posix, ping_pong)(benchmark::State& state) {
   for (auto _ : state) {
     start.arrive_and_wait();
     stop.arrive_and_wait();
   }
 }
-#endif
 
-class stream_socket_communication : public socket_fixture {
+#endif // CAF_POSIX
+
+// -- raw read and write on sockets using the CAF API --------------------------
+
+namespace {
+
+class socket_communication_raw : public socket_fixture {
 public:
   void SetUp(const benchmark::State& state) override {
     socket_fixture::SetUp(state);
@@ -161,12 +176,18 @@ public:
   }
 };
 
-BENCHMARK_F(stream_socket_communication, ping_pong)(benchmark::State& state) {
+} // namespace
+
+BENCHMARK_F(socket_communication_raw, ping_pong)(benchmark::State& state) {
   for (auto _ : state) {
     start.arrive_and_wait();
     stop.arrive_and_wait();
   }
 }
+
+// -- reading via stream_transport ---------------------------------------------
+
+namespace {
 
 enum class app_state {
   reading,
@@ -174,59 +195,64 @@ enum class app_state {
   done,
 };
 
-class pong_stream_application {
+class pong_stream_application : public net::stream_oriented::upper_layer {
 public:
-  using input_tag = tag::stream_oriented;
-
   pong_stream_application(byte_buffer* in, byte_buffer* out)
-    : state(app_state::done), in(in), out(out) {
+    : state_(app_state::done), in_(in), out_(out) {
     // nop
   }
 
-  template <class ParentPtr>
-  error init(net::socket_manager*, ParentPtr parent, const settings&) {
-    parent->configure_read(net::receive_policy::exactly(in->size()));
-    return none;
+  void prepare_send() override {
+    // nop
   }
 
-  template <class ParentPtr>
-  bool prepare_send(ParentPtr) {
-    return true;
-  }
-
-  template <class ParentPtr>
-  bool done_sending(ParentPtr) {
-    if (state != app_state::writing)
+  bool done_sending() override {
+    if (state_ != app_state::writing)
       CAF_CRITICAL("done_sending called but app is not writing!");
-    state = app_state::done;
+    state_ = app_state::done;
     return true;
   }
 
-  template <class ParentPtr>
-  ptrdiff_t consume(ParentPtr parent, byte_span data, byte_span) {
-    if (data.size() != in->size())
-      CAF_CRITICAL("unexpected data");
-    if (state != app_state::reading)
-      CAF_CRITICAL("consume called but app is not reading!");
-    parent->begin_output();
-    auto& buf = parent->output_buffer();
-    buf.insert(buf.end(), out->begin(), out->end());
-    parent->end_output();
-    state = app_state::writing;
-    return static_cast<ptrdiff_t>(data.size());
-  }
-
-  template <class ParentPtr>
-  void abort(ParentPtr, const error&) {
+  void abort(const error&) override {
     CAF_CRITICAL("abort called");
   }
 
-  app_state state;
-  byte_buffer* in;
-  byte_buffer* out;
+  error start(net::stream_oriented::lower_layer* down,
+              const settings&) override {
+    down->configure_read(net::receive_policy::exactly(in_->size()));
+    down_ = down;
+    return none;
+  }
+
+  ptrdiff_t consume(byte_span data, byte_span) override {
+    if (data.size() != in_->size())
+      CAF_CRITICAL("unexpected data");
+    if (state_ != app_state::reading)
+      CAF_CRITICAL("consume called but app is not reading!");
+    down_->begin_output();
+    auto& buf = down_->output_buffer();
+    buf.insert(buf.end(), out_->begin(), out_->end());
+    down_->end_output();
+    state_ = app_state::writing;
+    return static_cast<ptrdiff_t>(data.size());
+  }
+
+  void state(app_state value) {
+    state_ = value;
+  }
+
+  app_state state() {
+    return state_;
+  }
+
+private:
+  net::stream_oriented::lower_layer* down_ = nullptr;
+  app_state state_;
+  byte_buffer* in_;
+  byte_buffer* out_;
 };
 
-class stream_transport_communication : public socket_fixture {
+class socket_communication_stream_transport : public socket_fixture {
 public:
   void SetUp(const benchmark::State& state) override {
     socket_fixture::SetUp(state);
@@ -239,23 +265,25 @@ public:
         CAF_CRITICAL("failed to read buffer");
     })};
     receiver = std::thread{[this] {
-      using app = pong_stream_application;
-      auto mpx = std::make_unique<net::multiplexer>(nullptr);
+      using app_t = pong_stream_application;
+      auto mpx = net::multiplexer::make(nullptr);
+      mpx->set_thread_id();
+      mpx->apply_updates();
       if (auto err = mpx->init())
         CAF_CRITICAL("mpx->init failed");
-      mpx->set_thread_id();
-      auto mgr = net::make_socket_manager<app, net::stream_transport>(
-        pong_sock, mpx.get(), &pong_in, &pong_out);
+      auto app = std::make_unique<app_t>(&pong_in, &pong_out);
+      auto app_ptr = app.get();
+      auto transport = net::stream_transport::make(pong_sock, std::move(app));
+      auto mgr = net::socket_manager::make(mpx.get(), std::move(transport));
       settings cfg;
-      if (auto err = mgr->init(cfg)) {
-        auto what = "mgr->init failed: "s;
-        what += to_string(err);
+      if (auto err = mgr->start(cfg)) {
+        auto what = "mpx->init failed: " + to_string(err);
         CAF_CRITICAL(what.c_str());
       }
-      auto f = loop([this, &mgr, &mpx] {
-        auto& state = mgr->protocol().upper_layer().state;
-        state = app_state::reading;
-        while (state != app_state::done) {
+      mpx->apply_updates();
+      auto f = loop([this, app_ptr, &mpx] {
+        app_ptr->state(app_state::reading);
+        while (app_ptr->state() != app_state::done) {
           mpx->poll_once(true);
         }
       });
@@ -264,71 +292,82 @@ public:
   }
 };
 
-BENCHMARK_F(stream_transport_communication, ping_pong)(benchmark::State& state) {
+} // namespace
+
+BENCHMARK_F(socket_communication_stream_transport, ping_pong)(benchmark::State& state) {
   for (auto _ : state) {
     start.arrive_and_wait();
     stop.arrive_and_wait();
   }
 }
 
-class pong_msg_application {
-public:
-  using input_tag = tag::message_oriented;
+// -- reading via length_prefix_framing (lpf) ----------------------------------
 
+namespace {
+
+class pong_msg_application : public net::binary::upper_layer {
+public:
   pong_msg_application(byte_buffer* in, byte_buffer* out)
-    : state(app_state::done), in(in), out(out) {
+    : state_(app_state::done), in_(in), out_(out) {
     // nop
   }
 
-  template <class ParentPtr>
-  error init(net::socket_manager*, ParentPtr, const settings&) {
+  void prepare_send() override {
+    // nop
+  }
+
+  bool done_sending() override {
+    if (state_ != app_state::writing)
+      CAF_CRITICAL("done_sending called but app is not writing!");
+    state_ = app_state::done;
+    return true;
+  }
+
+  error start(net::binary::lower_layer* down, const settings&) override {
+    down->request_messages();
+    down_ = down;
     return none;
   }
 
-  template <class ParentPtr>
-  bool prepare_send(ParentPtr) {
-    return true;
-  }
-
-  template <class ParentPtr>
-  bool done_sending(ParentPtr) {
-    if (state != app_state::writing)
-      CAF_CRITICAL("done_sending called but app is not writing!");
-    state = app_state::done;
-    return true;
-  }
-
-  template <class ParentPtr>
-  ptrdiff_t consume(ParentPtr parent, byte_span msg) {
-    if (msg.size() != in->size() - sizeof(uint32_t)) {
+  ptrdiff_t consume(byte_span msg) override {
+    if (msg.size() != in_->size() - sizeof(uint32_t)) {
       std::string msg = "unexpected data: expected ";
-      msg += std::to_string(in->size() - sizeof(uint32_t));
+      msg += std::to_string(in_->size() - sizeof(uint32_t));
       msg += " bytes, got ";
       msg += std::to_string(msg.size());
       CAF_CRITICAL(msg.c_str());
     }
-    if (state != app_state::reading)
+    if (state_ != app_state::reading)
       CAF_CRITICAL("consume called but app is not reading!");
-    parent->begin_message();
-    auto& buf = parent->message_buffer();
-    buf.insert(buf.end(), out->begin() + sizeof(uint32_t), out->end());
-    if (!parent->end_message())
+    down_->begin_message();
+    auto& buf = down_->message_buffer();
+    buf.insert(buf.end(), out_->begin() + sizeof(uint32_t), out_->end());
+    if (!down_->end_message())
       CAF_CRITICAL("end_message failed");
-    state = app_state::writing;
+    state_ = app_state::writing;
     return static_cast<ptrdiff_t>(msg.size());
   }
 
-  template <class ParentPtr>
-  void abort(ParentPtr, const error&) {
+  void abort(const error&) override {
     CAF_CRITICAL("abort called");
   }
 
-  app_state state;
-  byte_buffer* in;
-  byte_buffer* out;
+  void state(app_state value) {
+    state_ = value;
+  }
+
+  app_state state() {
+    return state_;
+  }
+
+private:
+  net::binary::lower_layer* down_ = nullptr;
+  app_state state_;
+  byte_buffer* in_;
+  byte_buffer* out_;
 };
 
-class msg_transport_communication : public socket_fixture {
+class socket_communication_lpf : public socket_fixture {
 public:
   void SetUp(const benchmark::State& state) override {
     socket_fixture::SetUp(state);
@@ -341,24 +380,28 @@ public:
         CAF_CRITICAL("failed to read buffer");
     })};
     receiver = std::thread{[this] {
-      using app = pong_msg_application;
-      auto mpx = std::make_unique<net::multiplexer>(nullptr);
+      using app_t = pong_msg_application;
+      auto mpx = net::multiplexer::make(nullptr);
+      mpx->set_thread_id();
+      mpx->apply_updates();
       if (auto err = mpx->init())
         CAF_CRITICAL("mpx->init failed");
-      mpx->set_thread_id();
-      auto mgr = net::make_socket_manager<app, net::length_prefix_framing,
-                                          net::stream_transport>(
-        pong_sock, mpx.get(), &pong_in, &pong_out);
+      auto app = std::make_unique<app_t>(&pong_in, &pong_out);
+      auto app_ptr = app.get();
+      auto framing = net::length_prefix_framing::make(std::move(app));
+      auto transport = net::stream_transport::make(pong_sock,
+                                                   std::move(framing));
+      auto mgr = net::socket_manager::make(mpx.get(), std::move(transport));
       settings cfg;
-      if (auto err = mgr->init(cfg)) {
+      if (auto err = mgr->start(cfg)) {
         auto what = "mgr->init failed: "s;
         what += to_string(err);
         CAF_CRITICAL(what.c_str());
       }
-      auto f = loop([this, &mgr, &mpx] {
-        auto& state = mgr->protocol().upper_layer().upper_layer().state;
-        state = app_state::reading;
-        while (state != app_state::done) {
+      mpx->apply_updates();
+      auto f = loop([this, app_ptr, &mpx] {
+        app_ptr->state(app_state::reading);
+        while (app_ptr->state() != app_state::done) {
           mpx->poll_once(true);
         }
       });
@@ -367,10 +410,11 @@ public:
   }
 };
 
-BENCHMARK_F(msg_transport_communication, ping_pong)(benchmark::State& state) {
+} // namespace
+
+BENCHMARK_F(socket_communication_lpf, ping_pong)(benchmark::State& state) {
   for (auto _ : state) {
     start.arrive_and_wait();
     stop.arrive_and_wait();
   }
 }
-

@@ -1,0 +1,3 @@
+#pragma once
+
+constexpr const char* twitter_json_file = "@TWITTER_JSON_FILE@";
