@@ -9,6 +9,10 @@ usage="\
 Usage:
   $0 [--<variable>=<value>...]
 
+Build options:
+  --tag=TAG                 set the CAF tag
+  --inc-tag=TAG             set the CAF incubator tag
+
 General CMake options:
   --cmake=PATH              set a custom path to the CMake binary
   --build-dir=PATH          set build directory [build]
