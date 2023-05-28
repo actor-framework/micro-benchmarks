@@ -102,7 +102,7 @@ if(NOT dl_rjson_POPULATED)
   FetchContent_Populate(dl_rjson)
 endif()
 add_library(rjson INTERFACE)
-target_include_directories(rjson INTERFACE "${dl_rjson_SOURCE_DIR}/include")
+target_include_directories(rjson SYSTEM INTERFACE "${dl_rjson_SOURCE_DIR}/include")
 
 FetchContent_Declare(
   dl_njson
@@ -112,7 +112,7 @@ if(NOT dl_njson_POPULATED)
   FetchContent_Populate(dl_njson)
 endif()
 add_library(njson INTERFACE)
-target_include_directories(njson INTERFACE "${dl_njson_SOURCE_DIR}/include")
+target_include_directories(njson SYSTEM INTERFACE "${dl_njson_SOURCE_DIR}/include")
 
 FetchContent_Declare(
   dl_cjson
@@ -132,7 +132,7 @@ add_library(
     ${cjson_dir}/json_valueiterator.inl
     ${cjson_dir}/json_writer.cpp
 )
-target_include_directories(cjson PUBLIC "${dl_cjson_SOURCE_DIR}/include")
+target_include_directories(cjson SYSTEM PUBLIC "${dl_cjson_SOURCE_DIR}/include")
 
 # -- generate data header ------------------------------------------------------
 
