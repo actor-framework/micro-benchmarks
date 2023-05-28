@@ -12,6 +12,8 @@
 #  include "caf/attach_stream_source.hpp"
 #endif
 
+#include <caf/detail/double_ended_queue.hpp>
+
 #include <cstdint>
 
 using namespace caf;
@@ -20,6 +22,8 @@ using namespace std::literals;
 class actors : public base_fixture {
 public:
   caf_context_ptr context;
+
+  int some_int = 42;
 
   void SetUp(const benchmark::State&) override {
     context = make_caf_context();
@@ -42,6 +46,28 @@ BENCHMARK_F(actors, spawn_and_await)(benchmark::State& state) {
 }
 
 #if CAF_VERSION >= 1900
+
+using namespace caf::async;
+
+BENCHMARK_DEFINE_F(actors, int_queue)(benchmark::State& state) {
+  auto num_items = state.range(0);
+  using actor_t = event_based_actor;
+  for (auto _ : state) {
+    auto& sys = context->sys;
+    auto queue = std::make_shared<detail::double_ended_queue<int>>();
+    sys.spawn([this, queue, num_items](actor_t* src) {
+      for (int i = 0; i < num_items; ++i)
+        queue->append(&some_int);
+    });
+    sys.spawn<detached>([queue, num_items](actor_t* snk) {
+      for (int i = 0; i < num_items; ++i)
+        auto ptr = queue->take_head();
+    });
+    sys.await_all_actors_done();
+  }
+}
+
+BENCHMARK_REGISTER_F(actors, int_queue)->Arg(1'000)->Arg(10'000)->Arg(100'000);
 
 BENCHMARK_DEFINE_F(actors, int_flow)(benchmark::State& state) {
   auto num_items = static_cast<size_t>(state.range(0));
