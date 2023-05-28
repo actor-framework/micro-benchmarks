@@ -5,15 +5,16 @@
 #include "caf/byte_buffer.hpp"
 #include "caf/event_based_actor.hpp"
 #include "caf/message.hpp"
-#include "caf/net/binary/lower_layer.hpp"
-#include "caf/net/binary/upper_layer.hpp"
-#include "caf/net/length_prefix_framing.hpp"
+#include "caf/net/lp/framing.hpp"
+#include "caf/net/lp/lower_layer.hpp"
+#include "caf/net/lp/upper_layer.hpp"
 #include "caf/net/multiplexer.hpp"
+#include "caf/net/octet_stream/lower_layer.hpp"
+#include "caf/net/octet_stream/transport.hpp"
+#include "caf/net/octet_stream/upper_layer.hpp"
 #include "caf/net/receive_policy.hpp"
 #include "caf/net/socket_manager.hpp"
-#include "caf/net/stream_oriented.hpp"
 #include "caf/net/stream_socket.hpp"
-#include "caf/net/stream_transport.hpp"
 
 #include <cstdint>
 #include <numeric>
@@ -24,22 +25,16 @@
 #  include <sys/types.h>
 #endif
 
-#if CAF_VERSION < 1900
-using sv_t = caf::string_view;
-#else
-using sv_t = std::string_view;
-#endif
-
 using namespace caf;
 using namespace std::literals;
 
 namespace {
 
-constexpr sv_t ping_text
-  = "Lorem ipsum dolor sit amet, consectetur adipiscing elit.";
+constexpr auto ping_text
+  = "Lorem ipsum dolor sit amet, consectetur adipiscing elit."sv;
 
-constexpr sv_t pong_text
-  = "In sapien diam, porttitor sed pretium quis, varius at orci.";
+constexpr auto pong_text
+  = "In sapien diam, porttitor sed pretium quis, varius at orci."sv;
 
 class socket_fixture : public base_fixture {
 public:
@@ -52,7 +47,7 @@ public:
     std::tie(ping_sock, pong_sock) = *net::make_stream_socket_pair();
     // Note: for the length-prefix framing, we need a 32-bit size header.
     {
-      binary_serializer sink{nullptr, ping_out};
+      caf::binary_serializer sink{nullptr, ping_out};
       sink.skip(sizeof(uint32_t));
       APPLY_OR_DIE(sink, ping_text);
       sink.seek(0);
@@ -61,7 +56,7 @@ public:
       pong_in.resize(ping_out.size());
     }
     {
-      binary_serializer sink{nullptr, pong_out};
+      caf::binary_serializer sink{nullptr, pong_out};
       sink.skip(sizeof(uint32_t));
       APPLY_OR_DIE(sink, pong_text);
       sink.seek(0);
@@ -185,7 +180,7 @@ BENCHMARK_F(socket_communication_raw, ping_pong)(benchmark::State& state) {
   }
 }
 
-// -- reading via stream_transport ---------------------------------------------
+// -- reading via octet_stream::transport --------------------------------------
 
 namespace {
 
@@ -195,7 +190,7 @@ enum class app_state {
   done,
 };
 
-class pong_stream_application : public net::stream_oriented::upper_layer {
+class pong_stream_application : public net::octet_stream::upper_layer {
 public:
   pong_stream_application(byte_buffer* in, byte_buffer* out)
     : state_(app_state::done), in_(in), out_(out) {
@@ -217,8 +212,7 @@ public:
     CAF_CRITICAL("abort called");
   }
 
-  error start(net::stream_oriented::lower_layer* down,
-              const settings&) override {
+  error start(net::octet_stream::lower_layer* down) override {
     down->configure_read(net::receive_policy::exactly(in_->size()));
     down_ = down;
     return none;
@@ -246,7 +240,7 @@ public:
   }
 
 private:
-  net::stream_oriented::lower_layer* down_ = nullptr;
+  net::octet_stream::lower_layer* down_ = nullptr;
   app_state state_;
   byte_buffer* in_;
   byte_buffer* out_;
@@ -273,10 +267,10 @@ public:
         CAF_CRITICAL("mpx->init failed");
       auto app = std::make_unique<app_t>(&pong_in, &pong_out);
       auto app_ptr = app.get();
-      auto transport = net::stream_transport::make(pong_sock, std::move(app));
+      auto transport = net::octet_stream::transport::make(pong_sock,
+                                                          std::move(app));
       auto mgr = net::socket_manager::make(mpx.get(), std::move(transport));
-      settings cfg;
-      if (auto err = mgr->start(cfg)) {
+      if (auto err = mgr->start()) {
         auto what = "mpx->init failed: " + to_string(err);
         CAF_CRITICAL(what.c_str());
       }
@@ -305,7 +299,7 @@ BENCHMARK_F(socket_communication_stream_transport, ping_pong)(benchmark::State& 
 
 namespace {
 
-class pong_msg_application : public net::binary::upper_layer {
+class pong_msg_application : public net::lp::upper_layer {
 public:
   pong_msg_application(byte_buffer* in, byte_buffer* out)
     : state_(app_state::done), in_(in), out_(out) {
@@ -323,7 +317,7 @@ public:
     return true;
   }
 
-  error start(net::binary::lower_layer* down, const settings&) override {
+  error start(net::lp::lower_layer* down) override {
     down->request_messages();
     down_ = down;
     return none;
@@ -361,7 +355,7 @@ public:
   }
 
 private:
-  net::binary::lower_layer* down_ = nullptr;
+  net::lp::lower_layer* down_ = nullptr;
   app_state state_;
   byte_buffer* in_;
   byte_buffer* out_;
@@ -388,12 +382,11 @@ public:
         CAF_CRITICAL("mpx->init failed");
       auto app = std::make_unique<app_t>(&pong_in, &pong_out);
       auto app_ptr = app.get();
-      auto framing = net::length_prefix_framing::make(std::move(app));
-      auto transport = net::stream_transport::make(pong_sock,
-                                                   std::move(framing));
+      auto framing = net::lp::framing::make(std::move(app));
+      auto transport = net::octet_stream::transport::make(pong_sock,
+                                                          std::move(framing));
       auto mgr = net::socket_manager::make(mpx.get(), std::move(transport));
-      settings cfg;
-      if (auto err = mgr->start(cfg)) {
+      if (auto err = mgr->start()) {
         auto what = "mgr->init failed: "s;
         what += to_string(err);
         CAF_CRITICAL(what.c_str());
