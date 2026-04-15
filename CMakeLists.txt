@@ -137,25 +137,26 @@ target_include_directories(cjson SYSTEM PUBLIC "${dl_cjson_SOURCE_DIR}/include")
 # -- generate data header ------------------------------------------------------
 
 set(TWITTER_JSON_FILE "${PROJECT_SOURCE_DIR}/data/twitter.json")
-configure_file(include/data.hpp.in include/data.hpp)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(micro-benchmark/data.hpp.in generated/data.hpp)
 
-# -- add executables -----------------------------------------------------------
+# -- add executable ------------------------------------------------------------
 
 add_executable(micro-benchmark
-  src/actors.cpp
-  src/json.cpp
-  src/main.cpp
-  src/message-creation.cpp
-  src/or_else.cpp
-  src/pattern-matching.cpp
-  src/serialization.cpp
+  micro-benchmark/actors.cpp
+  micro-benchmark/json.cpp
+  micro-benchmark/main.cpp
+  micro-benchmark/message-creation.cpp
+  micro-benchmark/or_else.cpp
+  micro-benchmark/pattern-matching.cpp
+  micro-benchmark/serialization.cpp
 )
 
 target_include_directories(
   micro-benchmark
   PRIVATE
-    include
-    "${CMAKE_CURRENT_BINARY_DIR}/include")
+    micro-benchmark
+    "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 target_link_libraries(
   micro-benchmark
@@ -174,6 +175,6 @@ if(TARGET CAF::net)
   target_sources(
     micro-benchmark
     PRIVATE
-      src/socket-communication.cpp
+      micro-benchmark/socket-communication.cpp
   )
 endif()
