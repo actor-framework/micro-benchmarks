@@ -2,8 +2,11 @@
 
 #include "caf/binary_deserializer.hpp"
 #include "caf/binary_serializer.hpp"
-#include "caf/make_message.hpp"
 #include "caf/message.hpp"
+
+#if CAF_VERSION < 10000
+#include "caf/make_message.hpp"
+#endif
 
 #include <random>
 #include <tuple>

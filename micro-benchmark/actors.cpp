@@ -92,7 +92,7 @@ void source(event_based_actor* self, size_t num_items, actor snk) {
                       ->make_observable() //
                       .iota(0)
                       .take(num_items)
-                      .compose(self->to_stream("benchmark", 5ms, 50));
+                      .to_stream("benchmark", 5ms, 50);
   self->send(snk, stream_hdl);
 }
 
