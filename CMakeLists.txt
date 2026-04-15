@@ -25,7 +25,7 @@ option(BUILD_SHARED_LIBS "Build shared library targets" ON)
 set(SANITIZERS "" CACHE STRING
     "Comma separated sanitizers, e.g., 'address,undefined'")
 
-set(CAF_TAG "master" CACHE STRING "CAF tag or branch name")
+set(CAF_TAG "main" CACHE STRING "CAF tag or branch name")
 
 # -- macOS-specific options ----------------------------------------------------
 
